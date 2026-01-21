@@ -1,0 +1,8 @@
+{
+    "assets": ["FX:EURUSD", "FX:GBPUSD", "FX:USDJPY", "OANDA:XAUUSD", "BINANCE:BTCUSDT"],
+    "timeframe": "1m",
+    "expiry": "1 min",
+    "timezone": "Asia/Dhaka",
+    "telegram_token": "7993715233:AAFwY5ZJ7-sen4uqPx5PdCmpdwyPbUI9YOg",
+    "chat_id": "-1002733230903"
+}
