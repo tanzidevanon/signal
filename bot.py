@@ -5,7 +5,7 @@ import pytz
 import requests
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from strategy import get_trading_signal
 from concurrent.futures import ThreadPoolExecutor
 
@@ -20,94 +20,89 @@ def send_telegram_msg(message):
     token = config['telegram_token']
     chat_id = config['chat_id']
     url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
-    try:
-        requests.get(url, timeout=10)
-    except:
-        pass
+    try: requests.get(url, timeout=10)
+    except: pass
 
-def check_result(asset, entry_price, direction):
-    # ৮৫ সেকেন্ড অপেক্ষা (ডাটা সেটেল হওয়ার জন্য)
-    print(f"⌛ Waiting for result: {asset}...")
-    time.sleep(85) 
+def check_result(asset, entry_price, direction, signal_time):
+    """
+    signal_time: সিগন্যাল দেওয়ার সময় (datetime object)
+    """
+    display_name = asset.replace('=X', '').replace('-', '')
+    print(f"⌛ Result checking started for {display_name}...")
     
-    try:
-        # লেটেস্ট ১ মিনিটের ডাটা ফেচ করা
-        data = yf.download(tickers=asset, period='1d', interval='1m', progress=False)
+    # ১ মিনিট ট্রেড শেষ হওয়ার জন্য এবং Yahoo ডাটা আপলোড হওয়ার জন্য ১০০ সেকেন্ড অপেক্ষা
+    time.sleep(100) 
+    
+    for attempt in range(3): # ৩ বার চেষ্টা করবে ডাটা না পেলে
+        try:
+            # গত ৫ মিনিটের ডাটা ফেচ করা যাতে সিগন্যাল টাইমটি খুঁজে পাওয়া যায়
+            data = yf.download(tickers=asset, period='1d', interval='1m', progress=False)
+            
+            if data is not None and not data.empty:
+                df = data.copy()
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df.columns = [str(col).lower() for col in df.columns]
+                
+                # সিগন্যাল যে মিনিটে দেওয়া হয়েছে তার ক্লোজিং প্রাইস খুঁজুন
+                # আমরা সিগন্যাল টাইমের ১ মিনিট পরের ক্যান্ডেল চেক করব (ট্রেড এক্সপায়ারি)
+                target_time = signal_time.replace(second=0, microsecond=0)
+                
+                # ডাটাফ্রেমের ইনডেক্সকে লোকাল টাইমে কনভার্ট করা (Asia/Dhaka)
+                df.index = df.index.tz_convert('Asia/Dhaka')
+                
+                # টার্গেট সময়ের ক্যান্ডেলটি খুঁজে বের করা
+                if target_time in df.index:
+                    current_price = float(df.loc[target_time, 'close'])
+                    
+                    if "CALL" in direction:
+                        win = current_price > entry_price
+                    else:
+                        win = current_price < entry_price
+                        
+                    status = "✅ WIN" if win else "❌ LOSS"
+                    
+                    res_msg = (
+                        f"📝 *SIGNAL RESULT: {display_name}*\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"Status: *{status}*\n"
+                        f"Entry: {entry_price:.5f}\n"
+                        f"Close: {current_price:.5f}\n"
+                        f"{'Target Hit!' if win else 'MTG 1 Step Recommended'}"
+                    )
+                    send_telegram_msg(res_msg)
+                    print(f"🎯 Result Sent: {display_name} -> {status}")
+                    return # কাজ শেষ হলে ফাংশন থেকে বের হয়ে যাবে
+                else:
+                    print(f"⚠️ Candle for {target_time} not found in Yahoo data yet. Retrying in 20s...")
+            
+        except Exception as e:
+            print(f"❌ Error for {asset} (Attempt {attempt+1}): {e}")
         
-        if data is not None and not data.empty:
-            df = data.copy()
-            
-            # ১. মাল্টি-ইনডেক্স কলাম ফিক্স (আপনার এররটির মূল কারণ এখানে)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            
-            # ২. কলামের নাম ছোট হাতের করা (Consistency)
-            df.columns = [str(col).lower() for col in df.columns]
-            
-            # ৩. সর্বশেষ ক্লোজিং প্রাইস নেওয়া এবং নিশ্চিত করা এটি একটি সিঙ্গেল ফ্লোট নাম্বার
-            last_close = df['close'].iloc[-1]
-            
-            # যদি এরপরেও এটি সিরিজ থাকে (বিরল ক্ষেত্রে), তবে প্রথম ভ্যালু নেওয়া
-            if isinstance(last_close, pd.Series):
-                current_price = float(last_close.iloc[0])
-            else:
-                current_price = float(last_close)
-                
-            display_name = asset.replace('=X', '').replace('-', '')
-            
-            # ৪. উইন-লস ক্যালকুলেশন
-            if "CALL" in direction:
-                win = current_price > entry_price
-            else:
-                win = current_price < entry_price
-                
-            status = "✅ WIN" if win else "❌ LOSS"
-            
-            res_msg = (
-                f"📝 *SIGNAL RESULT: {display_name}*\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"Status: *{status}*\n"
-                f"Entry Price: {entry_price:.5f}\n"
-                f"Closing Price: {current_price:.5f}\n"
-                f"{'Target Hit!' if win else 'Try 1st Step Martingale'}"
-            )
-            send_telegram_msg(res_msg)
-            print(f"🎯 Result Sent: {display_name} -> {status}")
-            
-        else:
-            print(f"⚠️ No data found for {asset} results.")
-            
-    except Exception as e:
-        print(f"❌ Result Tracker Error for {asset}: {str(e)}")
+        time.sleep(20) # ডাটা না পাওয়া গেলে ২০ সেকেন্ড পর আবার ট্রাই করবে
 
 def process_asset(symbol):
     try:
-        tf = config.get('timeframe', '1m')
-        data = yf.download(tickers=symbol, period='2d', interval=tf, progress=False)
+        data = yf.download(tickers=symbol, period='2d', interval=config.get('timeframe', '1m'), progress=False)
         if data.empty or len(data) < 100: return None
-        
         df = data.copy()
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df.columns = [str(col).lower() for col in df.columns]
-        
         return get_trading_signal(df)
-    except:
-        return None
+    except: return None
 
 def main():
     user_tz = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
-    print(f"🚀 Bot Started | Result Tracker Fixed")
+    print(f"🚀 Bot Running | Advanced Result Tracker Active")
     
     last_signal_time = {}
-    result_executor = ThreadPoolExecutor(max_workers=20)
+    result_executor = ThreadPoolExecutor(max_workers=25)
 
     while True:
         try:
             current_config = load_config()
             assets = current_config['assets']
-            tf_label = current_config.get('timeframe', '1m')
-            exp_label = current_config.get('expiry', '1 min')
             
             with ThreadPoolExecutor(max_workers=15) as executor:
                 results = list(executor.map(process_asset, assets))
@@ -126,20 +121,20 @@ def main():
                             f"📊 *ASSET:* {display_name}\n"
                             f"🚀 *DIRECTION:* {signal}\n"
                             f"🎯 *QUALITY:* {quality_pct}\n"
-                            f"⏰ *TIMEFRAME:* {tf_label}\n"
-                            f"⏳ *EXPIRY:* {exp_label}\n"
+                            f"⏰ *TIMEFRAME:* {current_config['timeframe']}\n"
+                            f"⏳ *EXPIRY:* {current_config['expiry']}\n"
                             f"🕒 *TIME (BD):* {now.strftime('%H:%M:%S')}\n\n"
                             f"⚠️ *Note:* Use 1st Step Martingale"
                         )
                         send_telegram_msg(msg)
                         last_signal_time[asset] = current_min
                         
-                        # রেজাল্ট চেক করার জন্য থ্রেড পাঠানো
-                        result_executor.submit(check_result, float(entry_price), direction=signal, asset=asset)
+                        # এখন সিগন্যাল টাইমসহ রেজাল্ট চেকারে পাঠানো হচ্ছে
+                        result_executor.submit(check_result, asset, float(entry_price), signal, now)
 
             time.sleep(5) 
         except Exception as e:
-            print(f"Loop Error: {e}")
+            print(f"Main Loop Error: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
