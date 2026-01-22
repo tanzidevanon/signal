@@ -8,17 +8,15 @@ import requests
 import os
 from datetime import datetime
 
-# ১. কনফিগ ফাইল লোড করার ফাংশন
+# ১. কনফিগ ফাইল লোড
 def load_config():
     config_path = os.path.join(os.path.dirname(__file__), 'config.json')
     with open(config_path, 'r') as f:
         return json.load(f)
 
-# প্রাথমিক কনফিগ সেটআপ
 config = load_config()
 TZ = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
 
-# ২. টেলিগ্রামে সিগন্যাল পাঠানোর ফাংশন
 def send_telegram_msg(message):
     token = config['telegram_token']
     chat_id = config['chat_id']
@@ -28,76 +26,80 @@ def send_telegram_msg(message):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-# ৩. সিগন্যাল লজিক (ইন্ডিকেটর এনালাইসিস)
+# ২. সিগন্যাল লজিক (Error Proof)
 def get_signal(symbol):
     try:
-        # ১ মিনিটের ডাটা সংগ্রহ (Yahoo Finance)
-        data = yf.download(tickers=symbol, period='1d', interval='1m', progress=False)
+        # যথেষ্ট পরিমাণ ডাটা নামানো (EMA 200 এর জন্য period='2d' নিরাপদ)
+        data = yf.download(tickers=symbol, period='2d', interval='1m', progress=False)
         
-        if data.empty or len(data) < 50:
+        if data.empty or len(data) < 201:
             return None
         
         df = data.copy()
         
-        # কলাম নাম ঠিক করা (yfinance মাঝে মাঝে Multi-index দিতে পারে)
+        # Yahoo Finance Multi-index কলাম ফিক্স
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
+        # কলাম নাম পরিষ্কার করা
+        df.columns = [str(col).lower() for col in df.columns]
+
         # --- ইন্ডিকেটর ক্যালকুলেশন ---
-        # RSI (7 পিরিয়ড - দ্রুত সিগন্যালের জন্য)
-        df['rsi'] = ta.rsi(df['Close'], length=7)
+        # RSI 7
+        df['rsi'] = ta.rsi(df['close'], length=7)
         
-        # Bollinger Bands (20, 2)
-        bb = ta.bbands(df['Close'], length=20, std=2)
-        df['bb_low'] = bb['BBL_20_2.0']
-        df['bb_up'] = bb['BBU_20_2.0']
+        # Bollinger Bands
+        bb = ta.bbands(df['close'], length=20, std=2)
         
-        # EMA 200 (ট্রেন্ড ফিল্টারের জন্য)
-        df['ema_200'] = ta.ema(df['Close'], length=200)
+        # EMA 200
+        df['ema_200'] = ta.ema(df['close'], length=200)
+        
+        # কলামগুলো মেইন ফ্রেমে জোড়া লাগানো
+        df = pd.concat([df, bb], axis=1)
+
+        # কলামগুলোর নাম যাই হোক না কেন, পজিশন অনুযায়ী ডাটা নেওয়া
+        # BB_Lower সাধারণত ১ম কলাম, BB_Upper ৩য় কলাম হয়
+        bbl_col = [c for c in df.columns if c.startswith('BBL')][0]
+        bbu_col = [c for c in df.columns if c.startswith('BBU')][0]
         
         last = df.iloc[-1]
-        prev = df.iloc[-2]
         
         signal = None
         quality = "NORMAL"
 
-        # --- সিগন্যাল কন্ডিশন (Robust Rules) ---
-        
-        # CALL (UP) লজিক: 
-        # ১. প্রাইস নিচের ব্যান্ডের নিচে বা সমান। ২. RSI ৩০ এর নিচে (Oversold)।
-        if last['Close'] <= last['bb_low'] and last['rsi'] < 35:
-            signal = "🟢 CALL (UP)"
-            # যদি প্রাইস EMA 200 এর উপরে থাকে তবে এটি স্ট্রং আপট্রেন্ড (High Quality)
-            if last['Close'] > last['ema_200']:
-                quality = "⭐⭐⭐ HIGH"
-            else:
-                quality = "⭐⭐ NORMAL"
+        # কন্ডিশন চেক
+        price = last['close']
+        rsi = last['rsi']
+        ema = last['ema_200']
+        lower_band = last[bbl_col]
+        upper_band = last[bbu_col]
 
-        # PUT (DOWN) লজিক:
-        # ১. প্রাইস উপরের ব্যান্ডের উপরে বা সমান। ২. RSI ৭০ এর উপরে (Overbought)।
-        elif last['Close'] >= last['bb_up'] and last['rsi'] > 65:
+        # CALL (UP)
+        if price <= lower_band and rsi < 35:
+            signal = "🟢 CALL (UP)"
+            quality = "⭐⭐⭐ HIGH" if price > ema else "⭐⭐ NORMAL"
+
+        # PUT (DOWN)
+        elif price >= upper_band and rsi > 65:
             signal = "🔴 PUT (DOWN)"
-            # যদি প্রাইস EMA 200 এর নিচে থাকে তবে এটি স্ট্রং ডাউনট্রেন্ড (High Quality)
-            if last['Close'] < last['ema_200']:
-                quality = "⭐⭐⭐ HIGH"
-            else:
-                quality = "⭐⭐ NORMAL"
+            quality = "⭐⭐⭐ HIGH" if price < ema else "⭐⭐ NORMAL"
             
         return signal, quality
     except Exception as e:
-        print(f"Analysis Error for {symbol}: {e}")
+        # এরর প্রিন্ট করবে যাতে বোঝা যায় ঠিক কী সমস্যা
+        print(f"Analysis Error for {symbol}: {str(e)}")
         return None
 
-# ৪. মেইন লুপ (২৪/৭ রান হবে)
+# ৩. মেইন লুপ
 def main():
-    print(f"✅ Bot Started at {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📊 Monitoring {len(config['assets'])} assets...")
+    print(f"✅ Bot Started Successfully at {datetime.now(TZ).strftime('%H:%M:%S')}")
+    print(f"📊 Monitoring {len(config['assets'])} assets with Yahoo Finance...")
     
     last_signal_time = {}
 
     while True:
         try:
-            # গিটহাব থেকে পুল করার পর কনফিগ আপডেট পেতে প্রতিবার লোড করা হচ্ছে
+            # কনফিগ রিলোড
             current_config = load_config()
             assets = current_config['assets']
             
@@ -105,11 +107,10 @@ def main():
                 if asset not in last_signal_time:
                     last_signal_time[asset] = ""
                 
-                # এনালাইসিস করা
                 res = get_signal(asset)
                 
-                # API Rate Limit এড়াতে সামান্য বিরতি
-                time.sleep(1.2)
+                # ১.৫ সেকেন্ড গ্যাপ যাতে সার্ভার ব্লক না করে
+                time.sleep(1.5)
                 
                 if res:
                     signal, quality = res
@@ -117,7 +118,6 @@ def main():
                         now = datetime.now(TZ)
                         current_min = now.strftime('%H:%M')
                         
-                        # একই মিনিটে বারবার সিগন্যাল পাঠানো বন্ধ করা
                         if last_signal_time[asset] != current_min:
                             display_name = asset.replace('=X', '').replace('-', '')
                             
@@ -126,21 +126,20 @@ def main():
                                 f"📊 *ASSET:* {display_name}\n"
                                 f"🚀 *DIRECTION:* {signal}\n"
                                 f"🎯 *QUALITY:* {quality}\n"
-                                f"⏰ *TIMEFRAME:* 1 MIN\n"
-                                f"⏳ *EXPIRY:* 1 MIN\n"
+                                f"⏰ *TF:* 1 MIN | *EXP:* 1 MIN\n"
                                 f"🕒 *TIME (BD):* {current_min}\n\n"
-                                f"⚠️ *Note:* Use 1st Step Martingale if needed."
+                                f"⚠️ *Note:* Use 1st Step Martingale"
                             )
                             send_telegram_msg(msg)
                             last_signal_time[asset] = current_min
-                            print(f"Sent signal for {display_name} at {current_min}")
+                            print(f"✅ Signal Sent: {display_name} - {signal}")
             
-            # একটি ফুল সাইকেল শেষ হওয়ার পর ২০ সেকেন্ড বিরতি
+            # সাইকেল শেষে ২০ সেকেন্ড বিরতি
             time.sleep(20)
             
         except Exception as e:
-            print(f"Main Loop Error: {e}")
-            time.sleep(30)
+            print(f"Loop Error: {e}")
+            time.sleep(20)
 
 if __name__ == "__main__":
     main()
