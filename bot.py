@@ -21,48 +21,72 @@ def send_telegram_msg(message):
     token = config['telegram_token']
     chat_id = config['chat_id']
     url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
-    try: requests.get(url, timeout=10)
-    except: pass
-
-# রেজাল্ট চেক করার ফাংশন
-def check_result(asset, entry_price, direction):
-    time.sleep(65) # ১ মিনিট ৫ সেকেন্ড অপেক্ষা
     try:
+        requests.get(url, timeout=10)
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+# রেজাল্ট চেক করার উন্নত ফাংশন
+def check_result(asset, entry_price, direction):
+    # ১ মিনিট এক্সপায়ারি + ২০ সেকেন্ড অতিরিক্ত অপেক্ষা (Yahoo ডাটার জন্য)
+    print(f"⌛ Waiting for result: {asset}...")
+    time.sleep(80) 
+    
+    try:
+        # লেটেস্ট ডাটা নেওয়া
         data = yf.download(tickers=asset, period='1d', interval='1m', progress=False)
-        current_price = data['Close'].iloc[-1]
-        display_name = asset.replace('=X', '').replace('-', '')
         
-        win = (current_price > entry_price) if "CALL" in direction else (current_price < entry_price)
-        status = "✅ WIN" if win else "❌ LOSS"
-        
-        res_msg = (
-            f"📝 *SIGNAL RESULT: {display_name}*\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"Result: *{status}*\n"
-            f"Entry: {entry_price:.5f}\n"
-            f"Exit: {current_price:.5f}\n"
-            f"{'Target Hit!' if win else 'Try 1st Step Martingale'}"
-        )
-        send_telegram_msg(res_msg)
-    except: pass
+        if not data.empty:
+            # সর্বশেষ ক্লোজিং প্রাইস নেওয়া
+            current_price = float(data['Close'].iloc[-1])
+            display_name = asset.replace('=X', '').replace('-', '')
+            
+            # উইন-লস লজিক
+            if "CALL" in direction:
+                win = current_price > entry_price
+            else:
+                win = current_price < entry_price
+                
+            status = "✅ WIN" if win else "❌ LOSS"
+            
+            res_msg = (
+                f"📝 *SIGNAL RESULT: {display_name}*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Status: *{status}*\n"
+                f"Entry: {entry_price:.5f}\n"
+                f"Exit: {current_price:.5f}\n"
+                f"{'Good Job!' if win else 'MTG 1 Needed'}"
+            )
+            send_telegram_msg(res_msg)
+            print(f"🎯 Result Sent for {display_name}: {status}")
+        else:
+            print(f"⚠️ Could not fetch data for result: {asset}")
+            
+    except Exception as e:
+        print(f"❌ Result Tracker Error for {asset}: {e}")
 
 def process_asset(symbol):
     try:
         tf = config.get('timeframe', '1m')
         data = yf.download(tickers=symbol, period='2d', interval=tf, progress=False)
         if data.empty or len(data) < 100: return None
+        
         df = data.copy()
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         df.columns = [str(col).lower() for col in df.columns]
+        
         return get_trading_signal(df)
-    except: return None
+    except:
+        return None
 
 def main():
     user_tz = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
-    print(f"🚀 Engine Started | Old Strategy | Result Tracker Active")
+    print(f"🚀 Bot Started | Result Tracker Active")
     
     last_signal_time = {}
-    result_executor = ThreadPoolExecutor(max_workers=5)
+    # রেজাল্ট চেকিং এর জন্য পর্যাপ্ত থ্রেড রাখা হয়েছে
+    result_executor = ThreadPoolExecutor(max_workers=20)
 
     while True:
         try:
@@ -71,7 +95,7 @@ def main():
             tf_label = current_config.get('timeframe', '1m')
             exp_label = current_config.get('expiry', '1 min')
             
-            # প্যারালাল স্ক্যানিং (দ্রুত কাজ করার জন্য)
+            # সব এসেট একসাথে স্ক্যান
             with ThreadPoolExecutor(max_workers=15) as executor:
                 results = list(executor.map(process_asset, assets))
             
@@ -96,11 +120,13 @@ def main():
                         )
                         send_telegram_msg(msg)
                         last_signal_time[asset] = current_min
-                        # রেজাল্ট চেকার রান করা
+                        
+                        # রেজাল্ট চেক করার জন্য আলাদা থ্রেড (এটি ব্যাকগ্রাউন্ডে কাজ করবে)
                         result_executor.submit(check_result, asset, entry_price, signal)
 
             time.sleep(5) 
         except Exception as e:
+            print(f"Main Loop Error: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
