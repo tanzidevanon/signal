@@ -4,8 +4,8 @@
         "AUDJPY=X", "EURCAD=X", "EURCHF=X", "EURAUD=X", "GBPAUD=X", 
         "GBPCAD=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X", "AUDCAD=X", 
         "AUDNZD=X", "EURNZD=X", "GBPNZD=X", "AUDCHF=X", "CADCHF=X"],
-    "timeframe": "1m",
-    "expiry": "1 min",
+    "timeframe": "5m",
+    "expiry": "5 min",
     "timezone": "Asia/Dhaka",
     "telegram_token": "7993715233:AAFwY5ZJ7-sen4uqPx5PdCmpdwyPbUI9YOg",
     "chat_id": "-1002733230903"
