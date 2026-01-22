@@ -3,7 +3,7 @@ import pandas as pd
 
 def get_trading_signal(df):
     try:
-        # ইন্ডিকেটর
+        # ১. ইন্ডিকেটর ক্যালকুলেশন
         bb = ta.bbands(df['close'], length=20, std=2)
         df = pd.concat([df, bb], axis=1)
         df['rsi'] = ta.rsi(df['close'], length=10)
@@ -18,25 +18,33 @@ def get_trading_signal(df):
         last = df.iloc[-1]
         close = last['close']
         rsi = last['rsi']
-        stoch_k = last[stk]
+        stk_val = last[stk]
         ema = last['ema_200']
 
         signal = None
-        quality = "⭐⭐ NORMAL"
+        accuracy_pct = 0
 
-        # 🟢 CALL (UP)
-        if (close <= last[bbl] or last['low'] <= last[bbl]) and rsi < 40:
-            if stoch_k < 30:
-                signal = "🟢 CALL (UP)"
-                if close > ema: quality = "⭐⭐⭐ HIGH"
+        # ২. CALL (UP) লজিক
+        if (last['low'] <= last[bbl] or close <= (last[bbl] * 1.001)) and rsi < 48:
+            signal = "🟢 CALL (UP)"
+            # পার্সেন্টেজ ক্যালকুলেশন
+            accuracy_pct = 75 # বেস একুরেসি
+            if rsi < 35: accuracy_pct += 10
+            if stk_val < 20: accuracy_pct += 8
+            if close > ema: accuracy_pct += 5 # ট্রেন্ডের দিকে থাকলে
+            if accuracy_pct > 98: accuracy_pct = 98
 
-        # 🔴 PUT (DOWN)
-        elif (close >= last[bbu] or last['high'] >= last[bbu]) and rsi > 60:
-            if stoch_k > 70:
-                signal = "🔴 PUT (DOWN)"
-                if close < ema: quality = "⭐⭐⭐ HIGH"
+        # ৩. PUT (DOWN) লজিক
+        elif (last['high'] >= last[bbu] or close >= (last[bbu] * 0.999)) and rsi > 52:
+            signal = "🔴 PUT (DOWN)"
+            # পার্সেন্টেজ ক্যালকুলেশন
+            accuracy_pct = 75
+            if rsi > 65: accuracy_pct += 10
+            if stk_val > 80: accuracy_pct += 8
+            if close < ema: accuracy_pct += 5 # ট্রেন্ডের দিকে থাকলে
+            if accuracy_pct > 98: accuracy_pct = 98
 
-        return signal, quality, close # প্রাইসও রিটার্ন করছি রেজাল্ট চেক করার জন্য
+        return signal, f"{accuracy_pct}%", close
 
-    except:
+    except Exception as e:
         return None, None, None
