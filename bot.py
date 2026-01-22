@@ -4,8 +4,9 @@ import json
 import pytz
 import requests
 import os
+import pandas as pd
 from datetime import datetime
-from strategy import get_trading_signal  # strategy.py থেকে রুলস ইমপোর্ট করা হয়েছে
+from strategy import get_trading_signal
 
 # কনফিগ লোড
 def load_config():
@@ -13,9 +14,10 @@ def load_config():
     with open(config_path, 'r') as f:
         return json.load(f)
 
+# গ্লোবাল কনফিগ
 config = load_config()
-TZ = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
 
+# টেলিগ্রাম মেসেজ ফাংশন
 def send_telegram_msg(message):
     token = config['telegram_token']
     chat_id = config['chat_id']
@@ -25,10 +27,16 @@ def send_telegram_msg(message):
     except:
         pass
 
+# ডাটা প্রসেস ফাংশন
 def process_asset(symbol):
     try:
-        # ডাটা ফেচ করা
-        data = yf.download(tickers=symbol, period='2d', interval='1m', progress=False)
+        # কনফিগ থেকে টাইমফ্রেম নেওয়া (যেমন: '1m', '5m')
+        tf = config.get('timeframe', '1m')
+        
+        # টাইমফ্রেম অনুযায়ী পিরিয়ড নির্ধারণ
+        period_val = '2d' if tf == '1m' else '5d'
+        
+        data = yf.download(tickers=symbol, period=period_val, interval=tf, progress=False)
         if data.empty or len(data) < 201: return None
         
         df = data.copy()
@@ -36,50 +44,63 @@ def process_asset(symbol):
             df.columns = df.columns.get_level_values(0)
         df.columns = [str(col).lower() for col in df.columns]
 
-        # strategy.py থেকে সিগন্যাল নেওয়া
         return get_trading_signal(df)
-    except:
+    except Exception as e:
+        print(f"Error processing {symbol}: {e}")
         return None
 
 def main():
-    print(f"🚀 Bot Engine Started. Monitoring {len(config['assets'])} assets...")
+    # টাইমজোন সেটআপ (কনফিগ থেকে)
+    user_tz = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
+    
+    print(f"🚀 Engine Started | Timezone: {user_tz} | TF: {config['timeframe']}")
+    
     last_signal_time = {}
 
     while True:
         try:
+            # প্রতি লুপে লেটেস্ট কনফিগ চেক (অ্যাসেট বা এক্সপায়ারি চেঞ্জের জন্য)
             current_config = load_config()
-            for asset in current_config['assets']:
+            assets = current_config['assets']
+            tf_label = current_config.get('timeframe', '1m')
+            exp_label = current_config.get('expiry', '1 min')
+            
+            for asset in assets:
                 if asset not in last_signal_time: last_signal_time[asset] = ""
                 
                 res = process_asset(asset)
-                time.sleep(1.5) # API Safety
+                time.sleep(1.2) # API Safety
                 
                 if res:
                     signal, quality = res
                     if signal:
-                        now = datetime.now(TZ)
-                        current_min = now.strftime('%H:%M')
+                        # বর্তমান সময় সেকেন্ডসহ (HH:MM:SS)
+                        now = datetime.now(user_tz)
+                        current_time_str = now.strftime('%H:%M:%S')
+                        current_min = now.strftime('%H:%M') # একই মিনিটে বারবার মেসেজ না পাঠানোর জন্য
                         
                         if last_signal_time[asset] != current_min:
                             display_name = asset.replace('=X', '').replace('-', '')
+                            
+                            # ডাইনামিক মেসেজ (সব কনফিগ থেকে আসবে)
                             msg = (
                                 f"🔔 *QUOTEX PREMIUM SIGNAL*\n\n"
                                 f"📊 *ASSET:* {display_name}\n"
                                 f"🚀 *DIRECTION:* {signal}\n"
                                 f"🎯 *QUALITY:* {quality}\n"
-                                f"⏰ *TF:* 1 MIN | *EXP:* 1 MIN\n"
-                                f"🕒 *TIME (BD):* {current_min}\n\n"
+                                f"⏰ *TIMEFRAME:* {tf_label}\n"
+                                f"⏳ *EXPIRY:* {exp_label}\n"
+                                f"🕒 *TIME (BD):* {current_time_str}\n\n"
                                 f"⚠️ *Note:* Use 1st Step Martingale"
                             )
                             send_telegram_msg(msg)
                             last_signal_time[asset] = current_min
-                            print(f"Signal Sent for {display_name}")
+                            print(f"[{current_time_str}] Signal Sent: {display_name}")
             
-            time.sleep(20)
+            time.sleep(15)
         except Exception as e:
             print(f"Engine Loop Error: {e}")
             time.sleep(20)
 
-import pandas as pd # process_asset এর প্রয়োজনে
 if __name__ == "__main__":
     main()
