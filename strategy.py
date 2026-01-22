@@ -3,6 +3,7 @@ import pandas as pd
 
 def get_trading_signal(df):
     try:
+        # ইন্ডিকেটর
         df['rsi'] = ta.rsi(df['close'], length=7)
         bb = ta.bbands(df['close'], length=20, std=2)
         df = pd.concat([df, bb], axis=1)
@@ -22,16 +23,18 @@ def get_trading_signal(df):
         lower_band = last[bbl_col]
         upper_band = last[bbu_col]
         
-        signal = None
-        quality = "NORMAL"
-
-        if price <= lower_band and rsi < 35:
-            signal = "🟢 CALL (UP)"
+        # ডিলে কমানোর জন্য লজিক কিছুটা রিল্যাক্স করা হয়েছে (যাতে সিগন্যাল সময়মতো আসে)
+        # CALL (UP)
+        if price <= (lower_band * 1.0002) and rsi < 38:
             quality = "⭐⭐⭐ HIGH" if price > ema_trend else "⭐⭐ NORMAL"
-        elif price >= upper_band and rsi > 65:
-            signal = "🔴 PUT (DOWN)"
+            return "🟢 CALL (UP)", quality
+
+        # PUT (DOWN)
+        elif price >= (upper_band * 0.9998) and rsi > 62:
             quality = "⭐⭐⭐ HIGH" if price < ema_trend else "⭐⭐ NORMAL"
+            return "🔴 PUT (DOWN)", quality
         
-        return signal, quality
-    except:
+        return None, None
+
+    except Exception as e:
         return None, None
