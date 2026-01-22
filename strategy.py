@@ -3,7 +3,6 @@ import pandas as pd
 
 def get_trading_signal(df):
     try:
-        # ইন্ডিকেটর ক্যালকুলেশন
         df['rsi'] = ta.rsi(df['close'], length=7)
         bb = ta.bbands(df['close'], length=20, std=2)
         df = pd.concat([df, bb], axis=1)
@@ -23,29 +22,23 @@ def get_trading_signal(df):
         lower_band = last[bbl_col]
         upper_band = last[bbu_col]
         
-        signal = None
-        quality = "NORMAL"
-
-        # --- ট্রেডিং লজিক (Signal) ---
+        # ১. কনফার্মড সিগন্যাল লজিক
         if price <= lower_band and rsi < 35:
-            signal = "🟢 CALL (UP)"
             quality = "⭐⭐⭐ HIGH" if price > ema_trend else "⭐⭐ NORMAL"
+            return "🟢 CALL (UP)", quality
+        
         elif price >= upper_band and rsi > 65:
-            signal = "🔴 PUT (DOWN)"
             quality = "⭐⭐⭐ HIGH" if price < ema_trend else "⭐⭐ NORMAL"
+            return "🔴 PUT (DOWN)", quality
+
+        # ২. প্রি-অ্যালার্ট লজিক (অত্যন্ত টাইট কন্ডিশন)
+        # ব্যান্ডের ১.০০০৫ গুণের মধ্যে থাকলে এবং RSI খুব কাছে থাকলে
+        if price <= (lower_band * 1.0005) and 35 <= rsi <= 38:
+            return "PREPARE_CALL", "WAITING"
+        elif price >= (upper_band * 0.9995) and 62 <= rsi <= 65:
+            return "PREPARE_PUT", "WAITING"
         
-        # --- এলার্ট লজিক (Pre-Alert) ---
-        # যদি সিগন্যাল না থাকে, তবে চেক করবে মার্কেট কি সিগন্যালের কাছাকাছি কি না
-        if signal is None:
-            # CALL এর জন্য এলার্ট (RSI 40 এর নিচে এবং ব্যান্ডের ১.০০১ গুণের মধ্যে)
-            if price <= (lower_band * 1.001) and rsi < 42:
-                return "PREPARE_CALL", "WAITING"
-            # PUT এর জন্য এলার্ট (RSI 60 এর উপরে এবং ব্যান্ডের ০.৯৯৯ গুণের মধ্যে)
-            elif price >= (upper_band * 0.999) and rsi > 58:
-                return "PREPARE_PUT", "WAITING"
-        
-        return signal, quality
+        return None, None
 
     except Exception as e:
-        print(f"Strategy Error: {e}")
         return None, None
