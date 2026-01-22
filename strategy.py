@@ -22,23 +22,16 @@ def get_trading_signal(df):
         lower_band = last[bbl_col]
         upper_band = last[bbu_col]
         
-        # ১. কনফার্মড সিগন্যাল লজিক
+        signal = None
+        quality = "NORMAL"
+
         if price <= lower_band and rsi < 35:
+            signal = "🟢 CALL (UP)"
             quality = "⭐⭐⭐ HIGH" if price > ema_trend else "⭐⭐ NORMAL"
-            return "🟢 CALL (UP)", quality
-        
         elif price >= upper_band and rsi > 65:
+            signal = "🔴 PUT (DOWN)"
             quality = "⭐⭐⭐ HIGH" if price < ema_trend else "⭐⭐ NORMAL"
-            return "🔴 PUT (DOWN)", quality
-
-        # ২. প্রি-অ্যালার্ট লজিক (অত্যন্ত টাইট কন্ডিশন)
-        # ব্যান্ডের ১.০০০৫ গুণের মধ্যে থাকলে এবং RSI খুব কাছে থাকলে
-        if price <= (lower_band * 1.0005) and 35 <= rsi <= 38:
-            return "PREPARE_CALL", "WAITING"
-        elif price >= (upper_band * 0.9995) and 62 <= rsi <= 65:
-            return "PREPARE_PUT", "WAITING"
         
-        return None, None
-
-    except Exception as e:
+        return signal, quality
+    except:
         return None, None
