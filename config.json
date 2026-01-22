@@ -1,5 +1,9 @@
 {
-    "assets": ["FX:EURUSD", "FX:GBPUSD", "FX:USDJPY", "OANDA:XAUUSD", "BINANCE:BTCUSDT"],
+    "assets": ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", 
+        "USDCHF=X", "NZDUSD=X", "EURGBP=X", "EURJPY=X", "GBPJPY=X", 
+        "AUDJPY=X", "EURCAD=X", "EURCHF=X", "EURAUD=X", "GBPAUD=X", 
+        "GBPCAD=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X", "AUDCAD=X", 
+        "AUDNZD=X", "EURNZD=X", "GBPNZD=X", "AUDCHF=X", "CADCHF=X"],
     "timeframe": "1m",
     "expiry": "1 min",
     "timezone": "Asia/Dhaka",
