@@ -1,60 +1,39 @@
 import pandas_ta as ta
 import pandas as pd
 
-def get_trading_signal(df):
-    """
-    এই ফাংশনটি ডাটাফ্রেম গ্রহণ করে এবং (Signal, Quality) রিটার্ন করে।
-    """
+def get_trading_signal(df, is_pre_signal=False):
     try:
-        # ১. ইন্ডিকেটর ক্যালকুলেশন
         df['rsi'] = ta.rsi(df['close'], length=7)
         bb = ta.bbands(df['close'], length=20, std=2)
         df = pd.concat([df, bb], axis=1)
         df['ema_200'] = ta.ema(df['close'], length=200)
         
-        # ২. ডাইনামিক কলাম শনাক্তকরণ (BB এর জন্য)
         bbl_col = [c for c in df.columns if c.startswith('BBL')][0]
         bbu_col = [c for c in df.columns if c.startswith('BBU')][0]
         
-        # সর্বশেষ ক্যান্ডেলের ডাটা নেওয়া
         last = df.iloc[-1]
-        
-        # --- ৩. ডাটা চেক (NaN হ্যান্ডেল করা) - এখানে বসবে ---
-        # যদি কোনো কারণে ইন্ডিকেটর ক্যালকুলেট না হয় (যেমন যথেষ্ট ডাটা নেই), তবে সিগন্যাল দিবে না
-        if pd.isna(last['rsi']) or pd.isna(last['ema_200']) or pd.isna(last[bbl_col]):
+        price, rsi, ema = last['close'], last['rsi'], last['ema_200']
+        lower_band, upper_band = last[bbl_col], last[bbu_col]
+
+        # ১. প্রি-সিগন্যাল লজিক (একটু শিথিল যাতে আগে অ্যালার্ট দেয়)
+        if is_pre_signal:
+            # প্রাইস ব্যান্ডের ৫ পিপসের মধ্যে এবং RSI লজিকের কাছাকাছি
+            is_call_pre = price <= (lower_band * 1.0005) and rsi < 40
+            is_put_pre = price >= (upper_band * 0.9995) and rsi > 60
+            
+            if is_call_pre or is_put_pre:
+                # সম্ভাবনা গণনা (ট্রেন্ডের সাথে থাকলে ৯০%, না থাকলে ৭০%)
+                prob = "90%" if (is_call_pre and price > ema) or (is_put_pre and price < ema) else "70%"
+                direction = "CALL" if is_call_pre else "PUT"
+                return direction, prob
             return None, None
-        # -----------------------------------------------
 
-        # ৪. ভেরিয়েবল সেটআপ
-        price = last['close']
-        rsi = last['rsi']
-        ema_trend = last['ema_200']
-        lower_band = last[bbl_col]
-        upper_band = last[bbu_col]
-        
-        signal = None
-        quality = "NORMAL"
-
-        # --- ৫. ট্রেডিং রুলস ---
-        
-        # CALL (UP) কন্ডিশন
+        # ২. ফাইনাল সিগন্যাল লজিক (কঠোর লজিক)
         if price <= lower_band and rsi < 35:
-            signal = "🟢 CALL (UP)"
-            if price > ema_trend:
-                quality = "⭐⭐⭐ HIGH"
-            else:
-                quality = "⭐⭐ NORMAL"
-
-        # PUT (DOWN) কন্ডিশন
+            return "🟢 CALL (UP)", "HIGH" if price > ema else "NORMAL"
         elif price >= upper_band and rsi > 65:
-            signal = "🔴 PUT (DOWN)"
-            if price < ema_trend:
-                quality = "⭐⭐⭐ HIGH"
-            else:
-                quality = "⭐⭐ NORMAL"
-        
-        return signal, quality
-
-    except Exception as e:
-        print(f"Strategy Error: {e}")
+            return "🔴 PUT (DOWN)", "HIGH" if price < ema else "NORMAL"
+            
+        return None, None
+    except:
         return None, None
