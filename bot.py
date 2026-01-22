@@ -24,35 +24,21 @@ def send_telegram_msg(message):
     except: pass
 
 def check_result(asset, entry_price, direction):
-    # ১ মিনিট ৫ সেকেন্ড অপেক্ষা (যাতে ক্যান্ডেল ক্লোজ হওয়ার ডাটা পাওয়া যায়)
-    time.sleep(65)
+    time.sleep(62) # ১ মিনিট পর রেজাল্ট চেক
     try:
         data = yf.download(tickers=asset, period='1d', interval='1m', progress=False)
         current_price = data['Close'].iloc[-1]
         display_name = asset.replace('=X', '').replace('-', '')
-        
-        if "CALL" in direction:
-            win = current_price > entry_price
-        else:
-            win = current_price < entry_price
-            
+        win = (current_price > entry_price) if "CALL" in direction else (current_price < entry_price)
         status = "✅ WIN" if win else "❌ LOSS"
-        msg = (
-            f"📝 *RESULT FOR {display_name}*\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"Status: *{status}*\n"
-            f"Entry: {entry_price:.5f}\n"
-            f"Exit: {current_price:.5f}\n"
-            f"{'Target Hit!' if win else 'Try 1st Step Martingale'}"
-        )
+        msg = f"📝 *RESULT: {display_name}*\n━━━━━━━━━━━━━━━\nStatus: *{status}*\nEntry: {entry_price:.5f}\nExit: {current_price:.5f}"
         send_telegram_msg(msg)
     except: pass
 
 def process_asset(symbol):
     try:
-        tf = config.get('timeframe', '1m')
-        data = yf.download(tickers=symbol, period='1d', interval=tf, progress=False)
-        if data.empty or len(data) < 30: return None
+        data = yf.download(tickers=symbol, period='1d', interval=config.get('timeframe', '1m'), progress=False)
+        if data.empty: return None
         df = data.copy()
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.columns = [str(col).lower() for col in df.columns]
@@ -61,52 +47,45 @@ def process_asset(symbol):
 
 def main():
     user_tz = pytz.timezone(config.get('timezone', 'Asia/Dhaka'))
-    print(f"🚀 Bot Started | Percentage Mode | Result Tracker Active")
+    print(f"🚀 Bot Running | Quality: Balanced | Result Tracker: ON")
     
     last_signal_time = {}
-    result_executor = ThreadPoolExecutor(max_workers=5)
+    res_executor = ThreadPoolExecutor(max_workers=5)
 
     while True:
         try:
             current_config = load_config()
             assets = current_config['assets']
-            tf_label = current_config.get('timeframe', '1m')
-            exp_label = current_config.get('expiry', '1 min')
             
-            with ThreadPoolExecutor(max_workers=10) as scan_executor:
-                results = list(scan_executor.map(process_asset, assets))
+            # দ্রুত প্যারালাল স্ক্যান
+            with ThreadPoolExecutor(max_workers=15) as executor:
+                results = list(executor.map(process_asset, assets))
             
             for i, res in enumerate(results):
-                asset = assets[i]
-                if res:
-                    signal, quality_pct, entry_price = res
-                    if signal:
-                        now = datetime.now(user_tz)
-                        current_min = now.strftime('%H:%M')
-                        
-                        if last_signal_time.get(asset) != current_min:
-                            display_name = asset.replace('=X', '').replace('-', '')
-                            time_str = now.strftime('%H:%M:%S')
-                            
-                            msg = (
-                                f"🔔 *QUOTEX PREMIUM SIGNAL*\n\n"
-                                f"📊 *ASSET:* {display_name}\n"
-                                f"🚀 *DIRECTION:* {signal}\n"
-                                f"🎯 *QUALITY:* {quality_pct}\n"
-                                f"⏰ *TIMEFRAME:* {tf_label}\n"
-                                f"⏳ *EXPIRY:* {exp_label}\n"
-                                f"🕒 *TIME (BD):* {time_str}\n\n"
-                                f"⚠️ *Note:* 1st Step Martingale Recommended"
-                            )
-                            send_telegram_msg(msg)
-                            last_signal_time[asset] = current_min
-                            
-                            # রেজাল্ট চেক করার জন্য আলাদা থ্রেড
-                            result_executor.submit(check_result, asset, entry_price, signal)
+                if res and res[0]:
+                    asset = assets[i]
+                    signal, quality, entry_price = res
+                    now = datetime.now(user_tz)
+                    current_min = now.strftime('%H:%M')
+                    
+                    if last_signal_time.get(asset) != current_min:
+                        display_name = asset.replace('=X', '').replace('-', '')
+                        msg = (
+                            f"🔔 *QUOTEX PREMIUM SIGNAL*\n\n"
+                            f"📊 *ASSET:* {display_name}\n"
+                            f"🚀 *DIRECTION:* {signal}\n"
+                            f"🎯 *QUALITY:* {quality}\n"
+                            f"⏰ *TIMEFRAME:* {current_config['timeframe']}\n"
+                            f"⏳ *EXPIRY:* {current_config['expiry']}\n"
+                            f"🕒 *TIME (BD):* {now.strftime('%H:%M:%S')}\n\n"
+                            f"⚠️ *Note:* 1st Step Martingale"
+                        )
+                        send_telegram_msg(msg)
+                        last_signal_time[asset] = current_min
+                        res_executor.submit(check_result, asset, entry_price, signal)
 
-            time.sleep(10) # ১০ সেকেন্ড বিরতি পরবর্তী স্ক্যানের আগে
+            time.sleep(5) # প্রতি ৫ সেকেন্ড পরপর চেক করবে
         except Exception as e:
-            print(f"Error: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
